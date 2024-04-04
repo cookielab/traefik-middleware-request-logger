@@ -1,12 +1,13 @@
-displayName: Demo Plugin
+displayName: Request/response logger
 type: middleware
 iconPath: .assets/icon.png
 
-import: github.com/traefik/plugindemo
+import: github.com/cookielab/traefik-middleware-request-logger
 
-summary: '[Demo] Add Request Header'
+summary: 'Logs request/resposes to stdout or via http post.'
 
 testData:
-  Headers:
-    X-Demo: test
-    X-URL: '{{URL}}'
+  content-types:
+    - application/json
+  limits:
+    max_size: 100kB
