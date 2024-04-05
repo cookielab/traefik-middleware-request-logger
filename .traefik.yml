@@ -1,3 +1,4 @@
+---
 displayName: Request/response logger
 type: middleware
 iconPath: .assets/icon.png
@@ -7,7 +8,8 @@ import: github.com/cookielab/traefik-middleware-request-logger
 summary: 'Logs request/resposes to stdout or via http post.'
 
 testData:
-  content-types:
+  RequestIDHeaderName: X-Request-ID
+  ContentTypes:
     - application/json
-  limits:
-    max_size: 100kB
+  Limits:
+    MaxBodySize: 1048576

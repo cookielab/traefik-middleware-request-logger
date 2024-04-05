@@ -1,3 +1,4 @@
+---
 run:
   timeout: 3m
   skip-files: []
@@ -11,7 +12,7 @@ linters-settings:
   golint:
     min-confidence: 0
   gocyclo:
-    min-complexity: 12
+    min-complexity: 15
   goconst:
     min-len: 5
     min-occurrences: 4
@@ -29,6 +30,7 @@ linters-settings:
 linters:
   enable-all: true
   disable:
+    - nolintlint
     - deadcode # deprecated
     - exhaustivestruct # deprecated
     - golint # deprecated

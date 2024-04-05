@@ -1,3 +1,3 @@
-module github.com/traefik/plugindemo
+module github.com/cookielab/traefik-middleware-request-logger
 
 go 1.19
