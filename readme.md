@@ -68,6 +68,6 @@ deployment:
           - key: go.mod
             path: go.mod
           - key: logger.go
-            path: main.go
+            path: logger.go
       name: plugins
 ```
