@@ -1,4 +1,4 @@
-# Request and response logger|
+# Request and response logger
 
 Add plugin into traefik static configuration
 
