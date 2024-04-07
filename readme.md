@@ -1,73 +1,47 @@
 # Request/response logger
 
-file provider example:
+Add plugin into traefik static configuration
 
 ```yml
-http:
-  middlewares:
-    my-plugin:
-      plugin:
-        traefik-middleware-request-logger:
-          RequestIDHeaderName: X-Request-Id
-          ContentTypes:
-            - application/json
-          StatusCodes:
-            - 200
-            - 500
-          Limits:
-            MaxBodySize: 16384
+experimental:
+  plugins:
+    traefik-middleware-request-logger:
+      moduleName: "github.com/cookielab/traefik-middleware-request-logger"
+      version: "v0.0.3"
 ```
 
-crd example:
+Add plugin into traefik via dynamic configuration (kubernetes)
 
 ```yml
 apiVersion: traefik.containo.us/v1alpha1
 kind: Middleware
 metadata:
-  name: log-request
+    name: my-traefik-middleware-request-logger
+    namespace: my-namespace
 spec:
-  plugin:
-    traefik-middleware-request-logger:
-      RequestIDHeaderName: X-Request-Id
-      ContentTypes:
-        - application/json
-      StatusCodes:
-        - 200
-        - 500
-      Limits:
-        MaxBodySize: 16384
+    plugin:
+        traefik-middleware-request-logger:
+            ContentTypes:
+                - application/json
+            Limits:
+                MaxBodySize: "1048576"
+            RequestIDHeaderName: X-Request-ID
+            StatusCodes:
+                - 200
 ```
 
-configMap via helm chart
+Configuration:
+
 
 ```yml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: traefik-middleware-request-logger
-data:
-{{ (.Files.Glob "traefik-middleware-request-logger/*").AsConfig | indent 2 }}
+---
+ContentTypes: # log only these content types
+  - application/json
+Limits:
+  MaxBodySize: 1048576 # max size of request/response body
+RequestIDHeaderName: X-Request-ID # save uniq request id into this header
+StatusCodes: # log only these status codes
+  - 200
 ```
 
-traefik helm chart values example (local plugin mode):
-
-```yaml
-additionalArguments:
-  - >-
-    --experimental.localplugins.log-request.modulename=github.com/cookielab/traefik-middleware-request-logger
-additionalVolumeMounts:
-  - mountPath: /plugins-local/src/github.com/cookielab/traefik-middleware-request-logger
-    name: plugins
-deployment:
-  additionalVolumes:
-    - configMap:
-        name: traefik-middleware-request-logger
-        items:
-          - key: dot.traefik.yml
-            path: .traefik.yml
-          - key: go.mod
-            path: go.mod
-          - key: logger.go
-            path: logger.go
-      name: plugins
-```
+Conditions use "AND" (all conditions must be true). When request or response size exeed limit, the info string is present.
