@@ -1,5 +1,5 @@
-// Package traefikmiddlewarerequestlogger Traefik middleware to log incoming requests and outgoing responses.
-package traefikmiddlewarerequestlogger
+// Package traefik_middleware_request_logger Traefik middleware to log incoming requests and outgoing responses.
+package traefik_middleware_request_logger //nolint:revive,stylecheck
 
 import (
 	"bufio"

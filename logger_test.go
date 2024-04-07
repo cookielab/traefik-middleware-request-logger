@@ -1,5 +1,5 @@
-// Package traefikmiddlewarerequestlogger_test This file contains the tests for the logger middleware.
-package traefikmiddlewarerequestlogger_test
+// Package traefik_middleware_request_logger_test This file contains the tests for the logger middleware.
+package traefik_middleware_request_logger_test
 
 import (
 	"context"
