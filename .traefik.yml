@@ -11,5 +11,7 @@ testData:
   RequestIDHeaderName: X-Request-ID
   ContentTypes:
     - application/json
+  StatusCodes:
+    - 200
   Limits:
     MaxBodySize: 1048576
