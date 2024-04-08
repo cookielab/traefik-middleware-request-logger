@@ -21,6 +21,8 @@ type Config struct {
 	RequestIDHeaderName string      `json:"RequestIDHeaderName,omitempty"` //nolint:tagliatelle // This is a configuration option
 	StatusCodes         []int       `json:"StatusCodes,omitempty"`         //nolint:tagliatelle // This is a configuration option
 	ContentTypes        []string    `json:"ContentTypes,omitempty"`        //nolint:tagliatelle // This is a configuration option
+	LogTarget           string      `json:"LogTarget,omitempty"`           //nolint:tagliatelle // This is a configuration option
+	LogTargetURL        string      `json:"LogTargetUrl,omitempty"`        //nolint:tagliatelle // This is a configuration option
 	Limits              ConfigLimit `json:"Limits,omitempty"`              //nolint:tagliatelle // This is a configuration option
 }
 
@@ -42,6 +44,8 @@ type logRequest struct {
 	statusCodes         []int
 	maxBodySize         int
 	requestIDHeaderName string
+	logTarget           string
+	logTargetURL        string
 }
 
 // RequestLog holds the plugin configuration.
@@ -81,6 +85,8 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		contentTypes:        config.ContentTypes,
 		statusCodes:         config.StatusCodes,
 		maxBodySize:         config.Limits.MaxBodySize,
+		logTarget:           config.LogTarget,
+		logTargetURL:        config.LogTargetURL,
 	}, nil
 }
 
@@ -124,11 +130,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Verb:    r.Method,
 	}
 
-	if allowBodySize(len(requestBody), p.maxBodySize) && allowContentType(r.Header.Get("Content-Type"), p.contentTypes) {
-		reqData.Body = string(requestBody)
-	} else {
-		reqData.Body = fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(requestBody), r.Header.Get("Content-Type"))
-	}
+	reqData.Body = allowedBody(requestBody, r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes)
 
 	responseBody := io.NopCloser(bytes.NewBuffer(respBodyBytes))
 	responseBodyBytes, _ := io.ReadAll(responseBody)
@@ -144,11 +146,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Time:    time.Now().Format(time.RFC3339),
 	}
 
-	if allowBodySize(len(responseBodyBytes), p.maxBodySize) && allowContentType(resp.Header().Get("Content-Type"), p.contentTypes) {
-		resData.Body = string(responseBodyBytes)
-	} else {
-		resData.Body = fmt.Sprintf("Response body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(responseBodyBytes), resp.Header().Get("Content-Type"))
-	}
+	resData.Body = allowedBody(responseBodyBytes, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes)
 
 	log := requestLog{
 		RequestID: requestID,
@@ -163,11 +161,22 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 	}
 
-	if allowStatusCode(resp.code, p.statusCodes) {
+	if allowStatusCode(resp.code, p.statusCodes) && p.logTarget == "stdout" {
 		_, err = os.Stdout.WriteString(string(jsonData) + "\n")
 		if err != nil {
 			fmt.Println(err)
 		}
+	}
+
+	if allowStatusCode(resp.code, p.statusCodes) && p.logTarget == "stderr" {
+		_, err = os.Stderr.WriteString(string(jsonData) + "\n")
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+
+	if allowStatusCode(resp.code, p.statusCodes) && p.logTarget == "url" && p.logTargetURL != "" {
+		go http.Post(p.logTargetURL, "application/json", bytes.NewBuffer(jsonData)) //nolint:errcheck
 	}
 }
 
@@ -243,4 +252,11 @@ func allowStatusCode(statusCode int, statusCodes []int) bool {
 
 func allowBodySize(bodySize, maxBodySize int) bool {
 	return bodySize <= maxBodySize
+}
+
+func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string) string {
+	if allowBodySize(len(body), maxBodySize) && allowContentType(contentType, contentTypes) {
+		return string(body)
+	}
+	return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(body), contentType)
 }

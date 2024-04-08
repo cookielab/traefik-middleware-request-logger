@@ -12,10 +12,7 @@ import (
 )
 
 func TestGetPlaintext(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 5}
-	cfg.RequestIDHeaderName = "X-Request-ID"
+	cfg := prepareConfig([]string{"text/plain"}, 5, []int{})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -45,10 +42,7 @@ func TestGetPlaintext(t *testing.T) {
 }
 
 func TestGetJson(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 1024}
-	cfg.RequestIDHeaderName = "X-Request-ID"
+	cfg := prepareConfig([]string{"application/json"}, 1024, []int{})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -78,10 +72,7 @@ func TestGetJson(t *testing.T) {
 }
 
 func TestPostJson(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 1024}
-	cfg.RequestIDHeaderName = "X-Request-ID"
+	cfg := prepareConfig([]string{"application/json"}, 1024, []int{})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -111,10 +102,7 @@ func TestPostJson(t *testing.T) {
 }
 
 func TestPostJsonWithBodyLimit(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 5}
-	cfg.RequestIDHeaderName = "X-Request-ID"
+	cfg := prepareConfig([]string{"application/json"}, 5, []int{})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -144,10 +132,7 @@ func TestPostJsonWithBodyLimit(t *testing.T) {
 }
 
 func TestPostJsonWithContentType(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 1024}
-	cfg.RequestIDHeaderName = "X-Request-ID"
+	cfg := prepareConfig([]string{"application/json"}, 1024, []int{})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -178,11 +163,7 @@ func TestPostJsonWithContentType(t *testing.T) {
 }
 
 func TestPostJsonWithStatusCode(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 1024}
-	cfg.RequestIDHeaderName = "X-Request-ID"
-	cfg.StatusCodes = []int{http.StatusInternalServerError}
+	cfg := prepareConfig([]string{"application/json"}, 1024, []int{http.StatusInternalServerError})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -213,11 +194,7 @@ func TestPostJsonWithStatusCode(t *testing.T) {
 }
 
 func TestPostJsonWithStatusCodeFalse(t *testing.T) {
-	cfg := traefikmiddlewarerequestlogger.CreateConfig()
-	cfg.ContentTypes = []string{"application/json"}
-	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 1024}
-	cfg.RequestIDHeaderName = "X-Request-ID"
-	cfg.StatusCodes = []int{http.StatusInternalServerError}
+	cfg := prepareConfig([]string{"application/json"}, 1024, []int{http.StatusInternalServerError})
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -262,4 +239,16 @@ func assertHeaderExists(t *testing.T, req *http.Request) {
 	if req.Header.Get("X-Request-ID") == "" {
 		t.Errorf("missing expected header: %s", "X-Request-ID")
 	}
+}
+
+func prepareConfig(contentTypes []string, maxBodySize int, statusCodes []int) *traefikmiddlewarerequestlogger.Config {
+	cfg := traefikmiddlewarerequestlogger.CreateConfig()
+	cfg.ContentTypes = contentTypes
+	cfg.LogTarget = "stdout"
+	cfg.LogTargetURL = ""
+	cfg.Limits = traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: maxBodySize}
+	cfg.RequestIDHeaderName = "X-Request-ID"
+	cfg.StatusCodes = statusCodes
+
+	return cfg
 }

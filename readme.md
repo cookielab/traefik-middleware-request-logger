@@ -42,6 +42,8 @@ Limits:
 RequestIDHeaderName: X-Request-ID # save uniq request id into this header
 StatusCodes: # log only these status codes
   - 200
+LogTarget: stdout # or "stderr" or "url"
+LogTargetUrl: https://consumer.logs.example.com/input
 ```
 
 Conditions use "AND" (all conditions must be true). When request or response size exeed limit, the info string is present.
