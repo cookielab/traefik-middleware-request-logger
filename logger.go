@@ -5,8 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/google/uuid" //nolint:depguard
 )
 
 // Config holds the plugin configuration.
@@ -91,7 +91,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 }
 
 func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID, _ := generateRandomID(16)
+	requestID := uuid.NewString()
 
 	if r.Header.Get(p.requestIDHeaderName) != "" {
 		requestID = r.Header.Get(p.requestIDHeaderName)
@@ -213,14 +213,6 @@ func (w *wrappedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	}
 
 	return hijacker.Hijack()
-}
-
-func generateRandomID(length int) (string, error) {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
 }
 
 func allowContentType(contentType string, contentTypes []string) bool {
