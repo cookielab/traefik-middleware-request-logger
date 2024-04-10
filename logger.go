@@ -119,7 +119,9 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	headers := make(map[string]string)
 	for name, values := range r.Header {
-		headers[name] = values[0] // Take the first value of the header
+		if len(values) > 0 {
+			headers[name] = values[0] // Take the first value of the header
+		}
 	}
 
 	reqData := requestData{
@@ -137,7 +139,9 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	respHeaders := make(map[string]string)
 	for name, values := range resp.Header() {
-		respHeaders[name] = values[0] // Take the first value of the header
+		if len(values) > 0 {
+			respHeaders[name] = values[0] // Take the first value of the header
+		}
 	}
 
 	resData := responseData{
