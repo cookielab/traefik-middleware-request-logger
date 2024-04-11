@@ -118,7 +118,6 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer resp.Flush()
 
 	respBodyBytes := resp.buf.Bytes()
-	_, _ = w.Write(respBodyBytes)
 
 	headers := make(map[string]string)
 	for name, values := range r.Header {

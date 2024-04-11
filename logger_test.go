@@ -39,6 +39,7 @@ func TestGetPlaintext(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	assertHeaderExists(t, req)
+	assertBody(t, recorder, "helloWorld")
 }
 
 func TestGetJson(t *testing.T) {
@@ -238,6 +239,14 @@ func assertHeaderExists(t *testing.T, req *http.Request) {
 
 	if req.Header.Get("X-Request-ID") == "" {
 		t.Errorf("missing expected header: %s", "X-Request-ID")
+	}
+}
+
+func assertBody(t *testing.T, recorder *httptest.ResponseRecorder, expected string) {
+	t.Helper()
+
+	if recorder.Body.String() != expected {
+		t.Errorf("invalid body value: %s, expected %s", recorder.Body.String(), expected)
 	}
 }
 
