@@ -7,7 +7,7 @@ experimental:
   plugins:
     traefik-middleware-request-logger:
       moduleName: "github.com/cookielab/traefik-middleware-request-logger"
-      version: "v0.0.3"
+      version: "v0.0.7"
 ```
 
 Add plugin into traefik via dynamic configuration (kubernetes)
@@ -26,6 +26,8 @@ spec:
             Limits:
                 MaxBodySize: "1048576"
             RequestIDHeaderName: X-Request-ID
+            SkipHeaders:
+                - Authorization
             StatusCodes:
                 - 200
 ```
@@ -42,6 +44,8 @@ Limits:
 RequestIDHeaderName: X-Request-ID # save uniq request id into this header
 StatusCodes: # log only these status codes
   - 200
+SkipHeaders:
+  - Authorization
 LogTarget: stdout # or "stderr" or "url"
 LogTargetUrl: https://consumer.logs.example.com/input
 ```

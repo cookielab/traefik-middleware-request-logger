@@ -23,6 +23,7 @@ type Config struct {
 	ContentTypes        []string    `json:"ContentTypes,omitempty"`        //nolint:tagliatelle // This is a configuration option
 	LogTarget           string      `json:"LogTarget,omitempty"`           //nolint:tagliatelle // This is a configuration option
 	LogTargetURL        string      `json:"LogTargetUrl,omitempty"`        //nolint:tagliatelle // This is a configuration option
+	SkipHeaders         []string    `json:"SkipHeaders,omitempty"`         //nolint:tagliatelle // This is a configuration option
 	Limits              ConfigLimit `json:"Limits,omitempty"`              //nolint:tagliatelle // This is a configuration option
 }
 
@@ -46,6 +47,7 @@ type logRequest struct {
 	requestIDHeaderName string
 	logTarget           string
 	logTargetURL        string
+	skipHeaders         []string
 }
 
 // RequestLog holds the plugin configuration.
@@ -87,6 +89,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		maxBodySize:         config.Limits.MaxBodySize,
 		logTarget:           config.LogTarget,
 		logTargetURL:        config.LogTargetURL,
+		skipHeaders:         config.SkipHeaders,
 	}, nil
 }
 
@@ -119,7 +122,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	headers := make(map[string]string)
 	for name, values := range r.Header {
-		if len(values) > 0 {
+		if len(values) > 0 && allowedHeader(name, p.skipHeaders) {
 			headers[name] = values[0] // Take the first value of the header
 		}
 	}
@@ -139,7 +142,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	respHeaders := make(map[string]string)
 	for name, values := range resp.Header() {
-		if len(values) > 0 {
+		if len(values) > 0 && allowedHeader(name, p.skipHeaders) {
 			respHeaders[name] = values[0] // Take the first value of the header
 		}
 	}
@@ -251,8 +254,23 @@ func allowBodySize(bodySize, maxBodySize int) bool {
 }
 
 func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string) string {
+	if len(body) == 0 {
+		return ""
+	}
 	if allowBodySize(len(body), maxBodySize) && allowContentType(contentType, contentTypes) {
 		return string(body)
 	}
 	return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(body), contentType)
+}
+
+func allowedHeader(headerName string, skipHeaders []string) bool {
+	if len(skipHeaders) == 0 {
+		return true
+	}
+	for _, sh := range skipHeaders {
+		if sh == headerName {
+			return false
+		}
+	}
+	return true
 }
