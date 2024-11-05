@@ -63,7 +63,7 @@ type requestData struct {
 	URI              string            `json:"uri"`               //nolint:tagliatelle
 	Host             string            `json:"host"`              //nolint:tagliatelle
 	Headers          map[string]string `json:"headers"`           //nolint:tagliatelle
-	Body             interface{}            `json:"body"`              //nolint:tagliatelle
+	Body             interface{}       `json:"body"`              //nolint:tagliatelle
 	Verb             string            `json:"verb"`              //nolint:tagliatelle
 	IPAddress        string            `json:"ip_address"`        //nolint:tagliatelle
 	Time             string            `json:"time"`              //nolint:tagliatelle
@@ -74,7 +74,7 @@ type responseData struct {
 	Time             string            `json:"time"`              //nolint:tagliatelle
 	Status           int               `json:"status"`            //nolint:tagliatelle
 	Headers          map[string]string `json:"headers"`           //nolint:tagliatelle
-	Body             interface{}            `json:"body"`              //nolint:tagliatelle
+	Body             interface{}       `json:"body"`              //nolint:tagliatelle
 	TransferEncoding string            `json:"transfer_encoding"` //nolint:tagliatelle
 }
 
