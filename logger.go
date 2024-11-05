@@ -63,7 +63,7 @@ type requestData struct {
 	URI              string            `json:"uri"`               //nolint:tagliatelle
 	Host             string            `json:"host"`              //nolint:tagliatelle
 	Headers          map[string]string `json:"headers"`           //nolint:tagliatelle
-	Body             string            `json:"body"`              //nolint:tagliatelle
+	Body             interface{}       `json:"body"`              //nolint:tagliatelle
 	Verb             string            `json:"verb"`              //nolint:tagliatelle
 	IPAddress        string            `json:"ip_address"`        //nolint:tagliatelle
 	Time             string            `json:"time"`              //nolint:tagliatelle
@@ -74,7 +74,7 @@ type responseData struct {
 	Time             string            `json:"time"`              //nolint:tagliatelle
 	Status           int               `json:"status"`            //nolint:tagliatelle
 	Headers          map[string]string `json:"headers"`           //nolint:tagliatelle
-	Body             string            `json:"body"`              //nolint:tagliatelle
+	Body             interface{}       `json:"body"`              //nolint:tagliatelle
 	TransferEncoding string            `json:"transfer_encoding"` //nolint:tagliatelle
 }
 
@@ -252,14 +252,25 @@ func allowBodySize(bodySize, maxBodySize int) bool {
 	return bodySize <= maxBodySize
 }
 
-func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string) string {
+func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string) interface{} {
 	if len(body) == 0 {
-		return ""
+		return nil
 	}
-	if allowBodySize(len(body), maxBodySize) && allowContentType(contentType, contentTypes) {
-		return string(body)
+	if !allowBodySize(len(body), maxBodySize) || !allowContentType(contentType, contentTypes) {
+		return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(body), contentType)
 	}
-	return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(body), contentType)
+
+	// Try to parse the body as JSON
+	var parsedBody interface{}
+	if contentType == "application/json" {
+		err := json.Unmarshal(body, &parsedBody)
+		if err == nil {
+			return parsedBody
+		}
+	}
+
+	// If not JSON, return as string
+	return string(body)
 }
 
 func allowedHeader(headerName string, skipHeaders []string) bool {
