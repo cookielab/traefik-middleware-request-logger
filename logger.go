@@ -25,6 +25,7 @@ type Config struct {
 	LogTargetURL        string      `json:"LogTargetUrl,omitempty"`        //nolint:tagliatelle // This is a configuration option
 	SkipHeaders         []string    `json:"SkipHeaders,omitempty"`         //nolint:tagliatelle // This is a configuration option
 	Limits              ConfigLimit `json:"Limits,omitempty"`              //nolint:tagliatelle // This is a configuration option
+	SkipBodyParse       bool        `json:"SkipBodyParse,omitempty"`              //nolint:tagliatelle // This is a configuration option
 }
 
 // ConfigLimit holds the plugin configuration.
@@ -48,6 +49,7 @@ type logRequest struct {
 	logTarget           string
 	logTargetURL        string
 	skipHeaders         []string
+	skipBodyParse       bool
 }
 
 // RequestLog holds the plugin configuration.
@@ -90,6 +92,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		logTarget:           config.LogTarget,
 		logTargetURL:        config.LogTargetURL,
 		skipHeaders:         config.SkipHeaders,
+		skipBodyParse:       config.SkipBodyParse,
 	}, nil
 }
 
@@ -134,7 +137,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Verb:    r.Method,
 	}
 
-	reqData.Body = allowedBody(requestBody, r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes)
+	reqData.Body = allowedBody(requestBody, r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
 
 	responseBody := io.NopCloser(bytes.NewBuffer(respBodyBytes))
 	responseBodyBytes, _ := io.ReadAll(responseBody)
@@ -152,7 +155,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Time:    time.Now().Format(time.RFC3339),
 	}
 
-	resData.Body = allowedBody(responseBodyBytes, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes)
+	resData.Body = allowedBody(responseBodyBytes, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
 
 	log := requestLog{
 		RequestID: requestID,
@@ -252,7 +255,7 @@ func allowBodySize(bodySize, maxBodySize int) bool {
 	return bodySize <= maxBodySize
 }
 
-func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string) interface{} {
+func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string, skipBodyParse bool) interface{} {
 	if len(body) == 0 {
 		return nil
 	}
@@ -260,15 +263,16 @@ func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes 
 		return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(body), contentType)
 	}
 
-	// Try to parse the body as JSON
-	var parsedBody interface{}
-	if contentType == "application/json" {
-		err := json.Unmarshal(body, &parsedBody)
-		if err == nil {
-			return parsedBody
+	if skipBodyParse == true {
+		// Try to parse the body as JSON
+		var parsedBody interface{}
+		if contentType == "application/json" {
+			err := json.Unmarshal(body, &parsedBody)
+			if err == nil {
+				return parsedBody
+			}
 		}
 	}
-
 	// If not JSON, return as string
 	return string(body)
 }
