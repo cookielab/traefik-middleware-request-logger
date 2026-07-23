@@ -33,11 +33,13 @@ type Config struct {
 
 // defaultRedactBodyFields is used when RedactBodyFields is not configured.
 // Redaction is on by default so credentials never leak into logs unnoticed.
-var defaultRedactBodyFields = []string{
-	"password", "passwd", "pwd", "secret", "client_secret", "clientSecret",
-	"token", "access_token", "accessToken", "refresh_token", "refreshToken",
-	"id_token", "idToken", "api_key", "apiKey", "apikey",
-	"authorization", "authorizationCode", "authorization_code",
+func defaultRedactBodyFields() []string {
+	return []string{
+		"password", "passwd", "pwd", "secret", "client_secret", "clientSecret",
+		"token", "access_token", "accessToken", "refresh_token", "refreshToken",
+		"id_token", "idToken", "api_key", "apiKey", "apikey",
+		"authorization", "authorizationCode", "authorization_code",
+	}
 }
 
 // ConfigLimit holds the plugin configuration.
@@ -99,7 +101,7 @@ type responseData struct {
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
 	fields := config.RedactBodyFields
 	if len(fields) == 0 {
-		fields = defaultRedactBodyFields
+		fields = defaultRedactBodyFields()
 	}
 	redactFields := make(map[string]bool, len(fields))
 	quoted := make([]string, 0, len(fields))

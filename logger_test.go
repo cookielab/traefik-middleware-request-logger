@@ -4,9 +4,9 @@ package traefik_middleware_request_logger_test
 import (
 	"context"
 	"io"
-	"os"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
