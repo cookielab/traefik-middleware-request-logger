@@ -51,8 +51,19 @@ StatusCodes: # log only these status codes
   - 200
 SkipHeaders:
   - Authorization
+RedactBodyFields: # body fields whose values are replaced with "[REDACTED]"
+  - password
+  - token
 LogTarget: stdout # or "stderr"
 ```
+
+Body redaction is **on by default**: when `RedactBodyFields` is not set, a built-in
+list of sensitive field names is used (`password`, `passwd`, `pwd`, `secret`,
+`client_secret`, `token`, `access_token`, `refresh_token`, `id_token`, `api_key`,
+`authorization`, `authorizationCode`, and camelCase variants). Matching is
+case-insensitive and applies to JSON bodies (recursively) as well as bodies logged
+as plain strings (`"field": "..."` and `field=...` shapes). Set `RedactBodyFields`
+to override the list with your own.
 
 
 Example `url`:
