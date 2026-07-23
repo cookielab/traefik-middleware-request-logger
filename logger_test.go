@@ -225,6 +225,70 @@ func TestPostJsonWithStatusCodeFalse(t *testing.T) {
 	assertHeaderExists(t, req)
 }
 
+// TestServerSentEventsAreNotBuffered makes sure the middleware forwards every chunk
+// to the client as it is written instead of holding it until the handler returns.
+func TestServerSentEventsAreNotBuffered(t *testing.T) {
+	cfg := prepareConfig([]string{"application/json"}, 1024, []int{})
+
+	ctx := context.Background()
+	rec := httptest.NewRecorder()
+	seen := make(chan string, 2)
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		// The interface assertion only resolves under the compiled `go test`; the
+		// yaegi interpreter used in CI cannot assert an interpreted type to an
+		// interface, so it is treated as optional. The pass-through check below is
+		// what actually guards against SSE buffering and runs under both.
+		flusher, canFlush := w.(http.Flusher)
+
+		for _, event := range []string{"data: one\n\n", "data: two\n\n"} {
+			if _, err := w.Write([]byte(event)); err != nil {
+				t.Error(err)
+
+				return
+			}
+
+			if !strings.HasSuffix(rec.Body.String(), event) {
+				t.Errorf("event %q was buffered instead of written through, client has %q", event, rec.Body.String())
+			}
+
+			if canFlush {
+				flusher.Flush()
+
+				if !rec.Flushed {
+					t.Error("Flush() was not propagated to the underlying ResponseWriter")
+				}
+			}
+			seen <- rec.Body.String()
+		}
+	})
+
+	handler, err := traefikmiddlewarerequestlogger.New(ctx, next, cfg, "demo-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler.ServeHTTP(rec, req)
+
+	close(seen)
+	got := []string{}
+	for body := range seen {
+		got = append(got, body)
+	}
+
+	if len(got) != 2 || got[0] != "data: one\n\n" {
+		t.Errorf("first event was not written through before the handler returned: %q", got)
+	}
+	assertBody(t, rec, "data: one\n\ndata: two\n\n")
+}
+
 //nolint:unused
 func assertHeader(t *testing.T, req *http.Request, key, expected string) {
 	t.Helper()

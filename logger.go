@@ -25,7 +25,7 @@ type Config struct {
 	LogTargetURL        string      `json:"LogTargetUrl,omitempty"`        //nolint:tagliatelle // This is a configuration option
 	SkipHeaders         []string    `json:"SkipHeaders,omitempty"`         //nolint:tagliatelle // This is a configuration option
 	Limits              ConfigLimit `json:"Limits,omitempty"`              //nolint:tagliatelle // This is a configuration option
-	SkipBodyParse       bool        `json:"SkipBodyParse,omitempty"`              //nolint:tagliatelle // This is a configuration option
+	SkipBodyParse       bool        `json:"SkipBodyParse,omitempty"`       //nolint:tagliatelle // This is a configuration option
 }
 
 // ConfigLimit holds the plugin configuration.
@@ -112,15 +112,14 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 
 	resp := &wrappedResponseWriter{
-		w:    w,
-		buf:  &bytes.Buffer{},
-		code: 200,
+		w:           w,
+		buf:         &bytes.Buffer{},
+		maxBodySize: p.maxBodySize,
+		code:        200,
 	}
 
 	p.next.ServeHTTP(resp, r)
-	defer resp.Flush()
-
-	respBodyBytes := resp.buf.Bytes()
+	resp.WriteHeader(resp.code) // ensure the status line is sent even for empty responses
 
 	headers := make(map[string]string)
 	for name, values := range r.Header {
@@ -137,10 +136,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Verb:    r.Method,
 	}
 
-	reqData.Body = allowedBody(requestBody, r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
-
-	responseBody := io.NopCloser(bytes.NewBuffer(respBodyBytes))
-	responseBodyBytes, _ := io.ReadAll(responseBody)
+	reqData.Body = allowedBody(requestBody, len(requestBody), r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
 
 	respHeaders := make(map[string]string)
 	for name, values := range resp.Header() {
@@ -155,7 +151,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Time:    time.Now().Format(time.RFC3339),
 	}
 
-	resData.Body = allowedBody(responseBodyBytes, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
+	resData.Body = allowedBody(resp.buf.Bytes(), resp.size, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
 
 	log := requestLog{
 		RequestID: requestID,
@@ -189,10 +185,17 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// wrappedResponseWriter passes the response through to the client as it is written
+// and keeps a copy of the body (capped at maxBodySize) for logging. It must never
+// hold the body back, otherwise streaming responses (SSE, chunked) stall until the
+// upstream handler returns.
 type wrappedResponseWriter struct {
-	w    http.ResponseWriter
-	buf  *bytes.Buffer
-	code int
+	w           http.ResponseWriter
+	buf         *bytes.Buffer
+	maxBodySize int
+	size        int
+	code        int
+	wroteHeader bool
 }
 
 func (w *wrappedResponseWriter) Header() http.Header {
@@ -200,18 +203,34 @@ func (w *wrappedResponseWriter) Header() http.Header {
 }
 
 func (w *wrappedResponseWriter) Write(b []byte) (int, error) {
-	return w.buf.Write(b)
+	w.WriteHeader(w.code)
+
+	if remaining := w.maxBodySize - w.size; remaining > 0 {
+		captured := b
+		if len(captured) > remaining {
+			captured = captured[:remaining]
+		}
+		w.buf.Write(captured) //nolint:errcheck // bytes.Buffer.Write never returns an error
+	}
+	w.size += len(b)
+
+	return w.w.Write(b)
 }
 
 func (w *wrappedResponseWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
 	w.code = code
+	w.w.WriteHeader(code)
 }
 
 func (w *wrappedResponseWriter) Flush() {
-	w.w.WriteHeader(w.code)
-	_, err := io.Copy(w.w, w.buf)
-	if err != nil {
-		fmt.Println(err)
+	w.WriteHeader(w.code)
+
+	if flusher, ok := w.w.(http.Flusher); ok {
+		flusher.Flush()
 	}
 }
 
@@ -255,15 +274,17 @@ func allowBodySize(bodySize, maxBodySize int) bool {
 	return bodySize <= maxBodySize
 }
 
-func allowedBody(body []byte, contentType string, maxBodySize int, contentTypes []string, skipBodyParse bool) interface{} {
-	if len(body) == 0 {
+// allowedBody renders the body for the log. bodySize is the full size of the original
+// body, which may be larger than body itself when the capture was truncated.
+func allowedBody(body []byte, bodySize int, contentType string, maxBodySize int, contentTypes []string, skipBodyParse bool) interface{} {
+	if bodySize == 0 {
 		return nil
 	}
-	if !allowBodySize(len(body), maxBodySize) || !allowContentType(contentType, contentTypes) {
-		return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", len(body), contentType)
+	if !allowBodySize(bodySize, maxBodySize) || !allowContentType(contentType, contentTypes) {
+		return fmt.Sprintf("Request body too large to log or wrong content type. Size: %d bytes, Content-type: %s", bodySize, contentType)
 	}
 
-	if skipBodyParse == true {
+	if skipBodyParse {
 		// Try to parse the body as JSON
 		var parsedBody interface{}
 		if contentType == "application/json" {
