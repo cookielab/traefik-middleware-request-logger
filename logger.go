@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid" //nolint:depguard
@@ -26,6 +28,18 @@ type Config struct {
 	SkipHeaders         []string    `json:"SkipHeaders,omitempty"`         //nolint:tagliatelle // This is a configuration option
 	Limits              ConfigLimit `json:"Limits,omitempty"`              //nolint:tagliatelle // This is a configuration option
 	SkipBodyParse       bool        `json:"SkipBodyParse,omitempty"`       //nolint:tagliatelle // This is a configuration option
+	RedactBodyFields    []string    `json:"RedactBodyFields,omitempty"`    //nolint:tagliatelle // This is a configuration option
+}
+
+// defaultRedactBodyFields is used when RedactBodyFields is not configured.
+// Redaction is on by default so credentials never leak into logs unnoticed.
+func defaultRedactBodyFields() []string {
+	return []string{
+		"password", "passwd", "pwd", "secret", "client_secret", "clientSecret",
+		"token", "access_token", "accessToken", "refresh_token", "refreshToken",
+		"id_token", "idToken", "api_key", "apiKey", "apikey",
+		"authorization", "authorizationCode", "authorization_code",
+	}
 }
 
 // ConfigLimit holds the plugin configuration.
@@ -50,6 +64,9 @@ type logRequest struct {
 	logTargetURL        string
 	skipHeaders         []string
 	skipBodyParse       bool
+	redactFields        map[string]bool
+	redactJSONRe        *regexp.Regexp
+	redactKVRe          *regexp.Regexp
 }
 
 // RequestLog holds the plugin configuration.
@@ -82,6 +99,22 @@ type responseData struct {
 
 // New creates and returns a new plugin instance.
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	fields := config.RedactBodyFields
+	if len(fields) == 0 {
+		fields = defaultRedactBodyFields()
+	}
+	redactFields := make(map[string]bool, len(fields))
+	quoted := make([]string, 0, len(fields))
+	for _, f := range fields {
+		redactFields[strings.ToLower(f)] = true
+		quoted = append(quoted, regexp.QuoteMeta(f))
+	}
+	names := strings.Join(quoted, "|")
+	// `"password" : "..."` inside bodies logged as plain strings (incl. escaped values)
+	redactJSONRe := regexp.MustCompile(`(?i)"(` + names + `)"\s*:\s*"(?:[^"\\]|\\.)*"`)
+	// `password=...` in form/query-style bodies
+	redactKVRe := regexp.MustCompile(`(?i)\b(` + names + `)=[^&\s"']+`)
+
 	return &logRequest{
 		name:                name,
 		next:                next,
@@ -93,6 +126,9 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		logTargetURL:        config.LogTargetURL,
 		skipHeaders:         config.SkipHeaders,
 		skipBodyParse:       config.SkipBodyParse,
+		redactFields:        redactFields,
+		redactJSONRe:        redactJSONRe,
+		redactKVRe:          redactKVRe,
 	}, nil
 }
 
@@ -136,7 +172,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Verb:    r.Method,
 	}
 
-	reqData.Body = allowedBody(requestBody, len(requestBody), r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
+	reqData.Body = p.redact(allowedBody(requestBody, len(requestBody), r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse))
 
 	respHeaders := make(map[string]string)
 	for name, values := range resp.Header() {
@@ -151,7 +187,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Time:    time.Now().Format(time.RFC3339),
 	}
 
-	resData.Body = allowedBody(resp.buf.Bytes(), resp.size, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse)
+	resData.Body = p.redact(allowedBody(resp.buf.Bytes(), resp.size, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse))
 
 	log := requestLog{
 		RequestID: requestID,
@@ -296,6 +332,32 @@ func allowedBody(body []byte, bodySize int, contentType string, maxBodySize int,
 	}
 	// If not JSON, return as string
 	return string(body)
+}
+
+// redact masks values of sensitive fields in a logged body, whether it was
+// parsed into JSON (maps/slices) or kept as a raw string.
+func (p *logRequest) redact(body interface{}) interface{} {
+	switch t := body.(type) {
+	case map[string]interface{}:
+		for k, v := range t {
+			if p.redactFields[strings.ToLower(k)] {
+				t[k] = "[REDACTED]"
+			} else {
+				t[k] = p.redact(v)
+			}
+		}
+		return t
+	case []interface{}:
+		for i, v := range t {
+			t[i] = p.redact(v)
+		}
+		return t
+	case string:
+		s := p.redactJSONRe.ReplaceAllString(t, `"$1":"[REDACTED]"`)
+		return p.redactKVRe.ReplaceAllString(s, "$1=[REDACTED]")
+	default:
+		return body
+	}
 }
 
 func allowedHeader(headerName string, skipHeaders []string) bool {

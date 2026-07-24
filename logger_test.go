@@ -3,8 +3,10 @@ package traefik_middleware_request_logger_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -324,4 +326,125 @@ func prepareConfig(contentTypes []string, maxBodySize int, statusCodes []int) *t
 	cfg.StatusCodes = statusCodes
 
 	return cfg
+}
+
+func TestRedactBodyFields(t *testing.T) {
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"authorizationCode":"Y2FydmFnbzpscWwx","requiresMfa":false}`))
+	})
+
+	cfg := &traefikmiddlewarerequestlogger.Config{
+		RequestIDHeaderName: "X-Request-ID",
+		LogTarget:           "stdout",
+		Limits:              traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 204800},
+		ContentTypes:        []string{"application/json"},
+	}
+
+	handler, err := traefikmiddlewarerequestlogger.New(ctx, next, cfg, "demo-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// same shape as a real OAuth login request body
+	body := `{"clientId":"dms","email":"user@example.com","password":"Kristian1234","responseType":"code"}`
+	req := httptest.NewRequest(http.MethodPost, "/auth/oauth/authorize", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	stdout := captureStdout(t, func() {
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	})
+
+	for _, leak := range []string{"Kristian1234", "Y2FydmFnbzpscWwx"} {
+		if strings.Contains(stdout, leak) {
+			t.Errorf("secret %q leaked into log: %s", leak, stdout)
+		}
+	}
+	for _, want := range []string{`password`, `authorizationCode`, "user@example.com"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("expected %q to stay in log: %s", want, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] marker in log: %s", stdout)
+	}
+}
+
+func TestRedactFormBody(t *testing.T) {
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cfg := &traefikmiddlewarerequestlogger.Config{
+		RequestIDHeaderName: "X-Request-ID",
+		LogTarget:           "stdout",
+		Limits:              traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 204800},
+	}
+
+	handler, err := traefikmiddlewarerequestlogger.New(ctx, next, cfg, "demo-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("email=a@b.cz&password=Hunter2!&x=1"))
+	req.Header.Set("Content-Type", "text/plain")
+
+	stdout := captureStdout(t, func() {
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	})
+
+	if strings.Contains(stdout, "Hunter2") {
+		t.Errorf("form password leaked: %s", stdout)
+	}
+	if !strings.Contains(stdout, "password=[REDACTED]") {
+		t.Errorf("expected redacted form field: %s", stdout)
+	}
+}
+
+func TestRedactCustomFields(t *testing.T) {
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cfg := &traefikmiddlewarerequestlogger.Config{
+		RequestIDHeaderName: "X-Request-ID",
+		LogTarget:           "stdout",
+		Limits:              traefikmiddlewarerequestlogger.ConfigLimit{MaxBodySize: 204800},
+		RedactBodyFields:    []string{"pin"},
+	}
+
+	handler, err := traefikmiddlewarerequestlogger.New(ctx, next, cfg, "demo-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/verify", strings.NewReader(`{"pin":"1234","user":"a"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	stdout := captureStdout(t, func() {
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	})
+
+	if strings.Contains(stdout, "1234") {
+		t.Errorf("custom field leaked: %s", stdout)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	return string(out)
 }
