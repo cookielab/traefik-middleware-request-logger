@@ -2,11 +2,14 @@
 package traefik_middleware_request_logger_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -132,6 +135,52 @@ func TestPostJsonWithBodyLimit(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	assertHeaderExists(t, req)
+}
+
+func TestLargeRequestBodyIsStreamedAndDiscarded(t *testing.T) {
+	const body = "large-request-body"
+
+	cfg := prepareConfig([]string{"text/plain"}, 5, []int{})
+	ctx := context.Background()
+	nextStarted := make(chan struct{})
+	var receivedBody string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(nextStarted)
+
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receivedBody = string(got)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefikmiddlewarerequestlogger.New(ctx, next, cfg, "demo-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://localhost", nil)
+	req.Body = &downstreamBody{
+		reader:  strings.NewReader(body),
+		started: nextStarted,
+	}
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", "text/plain")
+
+	stdout := captureStdout(t, func() {
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	})
+
+	if receivedBody != body {
+		t.Fatalf("downstream received %q, expected %q", receivedBody, body)
+	}
+	if strings.Contains(stdout, body) {
+		t.Fatalf("oversized body was retained in the log: %s", stdout)
+	}
+	if want := "Size: " + strconv.Itoa(len(body)) + " bytes"; !strings.Contains(stdout, want) {
+		t.Fatalf("missing body size %q in log: %s", want, stdout)
+	}
 }
 
 func TestPostJsonWithContentType(t *testing.T) {
@@ -447,4 +496,51 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 	return string(out)
+}
+
+type downstreamBody struct {
+	reader  io.Reader
+	started <-chan struct{}
+}
+
+func (b *downstreamBody) Read(p []byte) (int, error) {
+	select {
+	case <-b.started:
+		return b.reader.Read(p)
+	default:
+		return 0, errors.New("request body read before downstream handler started")
+	}
+}
+
+func (*downstreamBody) Close() error {
+	return nil
+}
+
+func BenchmarkLargeRequestBody(b *testing.B) {
+	const bodySize = 8 << 20
+
+	body := bytes.Repeat([]byte("x"), bodySize)
+	cfg := prepareConfig([]string{"application/octet-stream"}, 1024, []int{})
+	cfg.LogTarget = ""
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			b.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	handler, err := traefikmiddlewarerequestlogger.New(context.Background(), next, cfg, "demo-plugin")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.SetBytes(bodySize)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodPost, "http://localhost", bytes.NewReader(body))
+		req.ContentLength = -1
+		req.Header.Set("Content-Type", "application/octet-stream")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
 }

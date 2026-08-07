@@ -140,21 +140,27 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Header.Set(p.requestIDHeaderName, requestID)
 
-	requestBody := []byte{}
+	requestBody := &bodyCapture{
+		maxBodySize: int64(p.maxBodySize),
+		discard:     r.ContentLength > int64(p.maxBodySize),
+	}
 	if r.Body != nil {
-		requestBody, _ = io.ReadAll(r.Body)
+		r.Body = &readCloser{
+			Reader: io.TeeReader(r.Body, requestBody),
+			Closer: r.Body,
+		}
 	}
 
-	r.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-
 	resp := &wrappedResponseWriter{
-		w:           w,
-		buf:         &bytes.Buffer{},
-		maxBodySize: p.maxBodySize,
-		code:        200,
+		w:    w,
+		body: &bodyCapture{maxBodySize: int64(p.maxBodySize)},
+		code: 200,
 	}
 
 	p.next.ServeHTTP(resp, r)
+	if r.Body != nil {
+		_, _ = io.Copy(io.Discard, r.Body)
+	}
 	resp.WriteHeader(resp.code) // ensure the status line is sent even for empty responses
 
 	headers := make(map[string]string)
@@ -172,7 +178,11 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Verb:    r.Method,
 	}
 
-	reqData.Body = p.redact(allowedBody(requestBody, len(requestBody), r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse))
+	requestBodySize := requestBody.size
+	if r.ContentLength > requestBodySize {
+		requestBodySize = r.ContentLength
+	}
+	reqData.Body = p.redact(allowedBody(requestBody.buf.Bytes(), requestBodySize, r.Header.Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse))
 
 	respHeaders := make(map[string]string)
 	for name, values := range resp.Header() {
@@ -187,7 +197,7 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Time:    time.Now().Format(time.RFC3339),
 	}
 
-	resData.Body = p.redact(allowedBody(resp.buf.Bytes(), resp.size, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse))
+	resData.Body = p.redact(allowedBody(resp.body.buf.Bytes(), resp.body.size, resp.Header().Get("Content-Type"), p.maxBodySize, p.contentTypes, p.skipBodyParse))
 
 	log := requestLog{
 		RequestID: requestID,
@@ -221,15 +231,40 @@ func (p *logRequest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// bodyCapture retains the body only while it fits the logging limit. Once the
+// limit is crossed, the retained bytes are released and subsequent writes are
+// counted without being stored.
+type bodyCapture struct {
+	buf         bytes.Buffer
+	maxBodySize int64
+	size        int64
+	discard     bool
+}
+
+func (b *bodyCapture) Write(p []byte) (int, error) {
+	b.size += int64(len(p))
+	if b.discard || b.size > b.maxBodySize {
+		b.discard = true
+		b.buf = bytes.Buffer{}
+
+		return len(p), nil
+	}
+
+	return b.buf.Write(p)
+}
+
 // wrappedResponseWriter passes the response through to the client as it is written
 // and keeps a copy of the body (capped at maxBodySize) for logging. It must never
 // hold the body back, otherwise streaming responses (SSE, chunked) stall until the
 // upstream handler returns.
 type wrappedResponseWriter struct {
 	w           http.ResponseWriter
-	buf         *bytes.Buffer
-	maxBodySize int
-	size        int
+	body        *bodyCapture
 	code        int
 	wroteHeader bool
 }
@@ -241,14 +276,7 @@ func (w *wrappedResponseWriter) Header() http.Header {
 func (w *wrappedResponseWriter) Write(b []byte) (int, error) {
 	w.WriteHeader(w.code)
 
-	if remaining := w.maxBodySize - w.size; remaining > 0 {
-		captured := b
-		if len(captured) > remaining {
-			captured = captured[:remaining]
-		}
-		w.buf.Write(captured) //nolint:errcheck // bytes.Buffer.Write never returns an error
-	}
-	w.size += len(b)
+	w.body.Write(b) //nolint:errcheck // bytes.Buffer.Write never returns an error
 
 	return w.w.Write(b)
 }
@@ -306,13 +334,13 @@ func allowStatusCode(statusCode int, statusCodes []int) bool {
 	return false
 }
 
-func allowBodySize(bodySize, maxBodySize int) bool {
-	return bodySize <= maxBodySize
+func allowBodySize(bodySize int64, maxBodySize int) bool {
+	return bodySize <= int64(maxBodySize)
 }
 
 // allowedBody renders the body for the log. bodySize is the full size of the original
 // body, which may be larger than body itself when the capture was truncated.
-func allowedBody(body []byte, bodySize int, contentType string, maxBodySize int, contentTypes []string, skipBodyParse bool) interface{} {
+func allowedBody(body []byte, bodySize int64, contentType string, maxBodySize int, contentTypes []string, skipBodyParse bool) interface{} {
 	if bodySize == 0 {
 		return nil
 	}
