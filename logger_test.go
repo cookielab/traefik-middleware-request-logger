@@ -183,6 +183,34 @@ func TestLargeRequestBodyIsStreamedAndDiscarded(t *testing.T) {
 	}
 }
 
+func TestKnownLargeRequestBodyIsNotWrapped(t *testing.T) {
+	const body = "large-request-body"
+
+	cfg := prepareConfig([]string{"text/plain"}, 5, []int{})
+	cfg.LogTarget = ""
+	originalBody := io.NopCloser(strings.NewReader(body))
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != originalBody {
+			t.Error("known oversized body was unnecessarily wrapped")
+		}
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefikmiddlewarerequestlogger.New(context.Background(), next, cfg, "demo-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://localhost", nil)
+	req.Body = originalBody
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Type", "text/plain")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
 func TestPostJsonWithContentType(t *testing.T) {
 	cfg := prepareConfig([]string{"application/json"}, 1024, []int{})
 
@@ -271,9 +299,14 @@ func TestPostJsonWithStatusCodeFalse(t *testing.T) {
 	}
 	req.Header.Add("Content-Type", "application/json")
 
-	handler.ServeHTTP(recorder, req)
+	stdout := captureStdout(t, func() {
+		handler.ServeHTTP(recorder, req)
+	})
 
 	assertHeaderExists(t, req)
+	if stdout != "" {
+		t.Fatalf("unexpected log for filtered status: %s", stdout)
+	}
 }
 
 // TestServerSentEventsAreNotBuffered makes sure the middleware forwards every chunk
@@ -534,13 +567,22 @@ func BenchmarkLargeRequestBody(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.SetBytes(bodySize)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		req := httptest.NewRequest(http.MethodPost, "http://localhost", bytes.NewReader(body))
-		req.ContentLength = -1
-		req.Header.Set("Content-Type", "application/octet-stream")
-		handler.ServeHTTP(httptest.NewRecorder(), req)
+	for _, tc := range []struct {
+		name          string
+		contentLength int64
+	}{
+		{name: "KnownLength", contentLength: bodySize},
+		{name: "UnknownLength", contentLength: -1},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.SetBytes(bodySize)
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				req := httptest.NewRequest(http.MethodPost, "http://localhost", bytes.NewReader(body))
+				req.ContentLength = tc.contentLength
+				req.Header.Set("Content-Type", "application/octet-stream")
+				handler.ServeHTTP(httptest.NewRecorder(), req)
+			}
+		})
 	}
 }
